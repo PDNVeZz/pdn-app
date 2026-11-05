@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../models/store_result.dart';
+import 'create_alert_screen.dart';
 
 class ResultsScreen extends StatelessWidget {
   final String productName;
@@ -51,6 +52,30 @@ class ResultsScreen extends StatelessWidget {
                 final isBest = bestPrice != null && result.priceValue == bestPrice;
                 return _StoreCard(result: result, highlight: isBest);
               },
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CreateAlertScreen(
+                        productName: productName,
+                        currentBestPrice: bestPrice,
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.notifications_active_outlined),
+                  label: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('Crear alerta de precio'),
+                  ),
+                ),
+              ),
             ),
           ),
         ],

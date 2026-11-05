@@ -19,6 +19,7 @@ import json
 import os
 import re
 import unicodedata
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
@@ -27,6 +28,7 @@ from fastapi.responses import Response
 from PIL import Image
 from pydantic import BaseModel
 
+import alerts
 import anthropic
 import pillow_heif
 import requests
@@ -38,7 +40,18 @@ pillow_heif.register_heif_opener()
 
 load_dotenv()
 
-app = FastAPI(title="PDN API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Al arrancar: crea las tablas de alertas y enciende el temporizador que
+    # revisa los precios en segundo plano.
+    alerts.init_db()
+    alerts.start_scheduler()
+    yield
+    alerts.stop_scheduler()
+
+
+app = FastAPI(title="PDN API", version="0.1.0", lifespan=lifespan)
+app.include_router(alerts.router)
 
 # Permite que la app (Flutter web en localhost, o la app móvil) llame a esta
 # API desde otro origen. En desarrollo dejamos "*" (cualquier origen); antes
@@ -396,15 +409,24 @@ async def _search_store(store: str, actor_id: str, query: str):
         return {"store": store, "results": [], "error": str(exc)}
 
 
+async def search_all_stores(query: str) -> list:
+    """Busca `query` en las 4 tiendas en paralelo. Lo usan tanto /search-prices
+    como el revisor automático de alertas."""
+    if not apify_client:
+        raise RuntimeError("Falta configurar APIFY_TOKEN")
+    tasks = [
+        _search_store(store, actor_id, query)
+        for store, actor_id in STORE_ACTORS.items()
+    ]
+    return list(await asyncio.gather(*tasks))
+
+
+alerts.configure(search_all_stores)
+
+
 @app.post("/search-prices")
 async def search_prices(body: SearchPricesRequest):
     """Busca el producto en las 4 tiendas en paralelo y devuelve la comparación."""
     if not apify_client:
         raise HTTPException(500, "Falta configurar APIFY_TOKEN en el .env")
-
-    tasks = [
-        _search_store(store, actor_id, body.query)
-        for store, actor_id in STORE_ACTORS.items()
-    ]
-    results = await asyncio.gather(*tasks)
-    return {"query": body.query, "stores": results}
+    return {"query": body.query, "stores": await search_all_stores(body.query)}

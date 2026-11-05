@@ -5,7 +5,9 @@ import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../config.dart';
+import '../models/price_alert.dart';
 import '../models/store_result.dart';
+import 'user_id.dart';
 
 /// Claude solo acepta estos tipos de imagen. Si el archivo no trae un
 /// `mimeType` reconocible (pasa seguido en la versión web), lo adivinamos
@@ -99,5 +101,104 @@ class ApiService {
     return stores
         .map((s) => StoreResult.fromJson(Map<String, dynamic>.from(s as Map)))
         .toList();
+  }
+
+  // ---------------------------------------------------------------------
+  // Alertas de precio y Telegram
+  // ---------------------------------------------------------------------
+
+  static Future<Map<String, String>> _authHeaders() async => {
+        'Content-Type': 'application/json',
+        'X-User-Id': await UserId.get(),
+      };
+
+  static Map<String, dynamic> _decodeObject(http.Response response, String accion) {
+    if (response.statusCode != 200) {
+      throw ApiException(_describeError(response, accion));
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  static Future<PriceAlert> createAlert({
+    required String query,
+    required int targetPrice,
+    required List<int> days,
+    required List<int> hours,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$backendBaseUrl/alerts'),
+      headers: await _authHeaders(),
+      body: jsonEncode({
+        'query': query,
+        'target_price': targetPrice,
+        'days': days,
+        'hours': hours,
+      }),
+    );
+    return PriceAlert.fromJson(_decodeObject(response, 'crear la alerta'));
+  }
+
+  static Future<List<PriceAlert>> listAlerts() async {
+    final response = await http.get(
+      Uri.parse('$backendBaseUrl/alerts'),
+      headers: await _authHeaders(),
+    );
+    final data = _decodeObject(response, 'cargar tus alertas');
+    return (data['alerts'] as List<dynamic>)
+        .map((a) => PriceAlert.fromJson(Map<String, dynamic>.from(a as Map)))
+        .toList();
+  }
+
+  static Future<PriceAlert> updateAlert(String id, Map<String, dynamic> changes) async {
+    final response = await http.patch(
+      Uri.parse('$backendBaseUrl/alerts/$id'),
+      headers: await _authHeaders(),
+      body: jsonEncode(changes),
+    );
+    return PriceAlert.fromJson(_decodeObject(response, 'actualizar la alerta'));
+  }
+
+  static Future<void> deleteAlert(String id) async {
+    final response = await http.delete(
+      Uri.parse('$backendBaseUrl/alerts/$id'),
+      headers: await _authHeaders(),
+    );
+    _decodeObject(response, 'eliminar la alerta');
+  }
+
+  /// Fuerza una revisión inmediata (gasta créditos de Apify, ~4 búsquedas).
+  static Future<PriceAlert> checkAlertNow(String id) async {
+    final response = await http.post(
+      Uri.parse('$backendBaseUrl/alerts/$id/check-now'),
+      headers: await _authHeaders(),
+    );
+    return PriceAlert.fromJson(_decodeObject(response, 'revisar la alerta'));
+  }
+
+  /// {linked: bool, bot_configured: bool}
+  static Future<Map<String, dynamic>> telegramStatus() async {
+    final response = await http.get(
+      Uri.parse('$backendBaseUrl/telegram/status'),
+      headers: await _authHeaders(),
+    );
+    return _decodeObject(response, 'consultar Telegram');
+  }
+
+  /// Devuelve el enlace t.me que el usuario debe abrir para vincular su chat.
+  static Future<String> telegramLinkUrl() async {
+    final response = await http.post(
+      Uri.parse('$backendBaseUrl/telegram/link'),
+      headers: await _authHeaders(),
+    );
+    return _decodeObject(response, 'generar el enlace de Telegram')['url'] as String;
+  }
+
+  /// Pregunta al backend si el usuario ya tocó "Iniciar" en el bot.
+  static Future<bool> telegramVerify() async {
+    final response = await http.post(
+      Uri.parse('$backendBaseUrl/telegram/verify'),
+      headers: await _authHeaders(),
+    );
+    return _decodeObject(response, 'verificar Telegram')['linked'] as bool? ?? false;
   }
 }
