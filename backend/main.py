@@ -216,6 +216,42 @@ def _parse_price_number(value) -> float | None:
     return None
 
 
+def _image_url_is_complete(url) -> bool:
+    """Una URL de imagen "completa" termina en una extensión de archivo
+    (.jpg, .jpeg, .png, .webp...), opcionalmente seguida de parámetros. Si
+    termina en un punto o sin extensión, el actor la entregó truncada."""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    return re.search(r"\.[A-Za-z0-9]{2,5}(\?.*)?$", url.strip()) is not None
+
+
+def _fix_ripley_image(item: dict) -> None:
+    """A veces el actor de Ripley entrega en "image" una URL truncada (sin la
+    extensión del archivo, ej: ".../full_image-2000406357508."), que la CDN
+    rechaza con 403. En "raw_product" suele venir la URL válida
+    ("primaryImage", la lista "images" o las variantes), así que si la
+    principal está truncada buscamos una completa ahí y la dejamos en
+    item["image"]."""
+    if _image_url_is_complete(item.get("image")):
+        return
+
+    try:
+        raw = json.loads(item.get("raw_product") or "{}")
+    except Exception:  # noqa: BLE001 - si el JSON viene raro, no tocamos nada
+        return
+
+    candidates = [raw.get("primaryImage")]
+    candidates.extend(raw.get("images") or [])
+    for variant in raw.get("variants") or []:
+        candidates.append(variant.get("primaryImage"))
+        candidates.extend(variant.get("images") or [])
+
+    for candidate in candidates:
+        if _image_url_is_complete(candidate):
+            item["image"] = candidate
+            return
+
+
 def _normalize_falabella_price(item: dict) -> None:
     """Falabella no trae un único precio "correcto": puede venir en varios
     campos de nivel superior (internet_price, normal_price, cmr_price) y
@@ -345,6 +381,9 @@ async def _search_store(store: str, actor_id: str, query: str):
         if store == "falabella":
             for item in top_items:
                 _normalize_falabella_price(item)
+        elif store == "ripley":
+            for item in top_items:
+                _fix_ripley_image(item)
 
         print(
             f"[search-prices] {store}: {len(items)} resultado(s). "
